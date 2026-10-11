@@ -1,0 +1,86 @@
+# =============================================================================
+# Render Blueprint — VoiceGuard AI Voice Clone Detection System
+# https://docs.render.com/blueprint-spec
+#
+# Usage: Connect this repo to Render and it will auto-detect this file.
+# Items marked "sync: false" must be set manually in the Render dashboard.
+# =============================================================================
+
+services:
+  # -------------------------------------------------------------------------
+  # 1. Python AI Microservice (Wav2Vec2 deepfake voice detection)
+  #    Requires Standard plan (2 GB RAM) for the 300M-parameter model in FP16
+  # -------------------------------------------------------------------------
+  - type: web
+    name: voiceguard-ai-service
+    runtime: python
+    region: oregon
+    plan: standard
+    rootDir: ai-service
+    buildCommand: "pip install torch --index-url https://download.pytorch.org/whl/cpu && pip install -r requirements.txt"
+    startCommand: "uvicorn app:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+      - key: CORS_ORIGINS
+        sync: false
+      - key: TRANSFORMERS_CACHE
+        value: /tmp/hf_cache
+      - key: HF_HOME
+        value: /tmp/hf_home
+      - key: OMP_NUM_THREADS
+        value: "2"
+      - key: TOKENIZERS_PARALLELISM
+        value: "false"
+
+  # -------------------------------------------------------------------------
+  # 2. Spring Boot Backend (Auth, API Gateway, TiDB persistence)
+  #    Uses Docker build since no Maven wrapper (mvnw) is in the repo
+  # -------------------------------------------------------------------------
+  - type: web
+    name: voiceguard-backend
+    runtime: docker
+    region: oregon
+    plan: starter
+    rootDir: voice-clone-backend
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api
+    envVars:
+      - key: TIDB_HOST
+        sync: false
+      - key: TIDB_PORT
+        value: "4000"
+      - key: TIDB_DATABASE
+        value: voice_clone_detection
+      - key: TIDB_USERNAME
+        sync: false
+      - key: TIDB_PASSWORD
+        sync: false
+      - key: AI_SERVICE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_EXPIRATION_MS
+        value: "86400000"
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+
+  # -------------------------------------------------------------------------
+  # 3. React + Vite Frontend (Static Site)
+  #    VITE_API_BASE_URL is a BUILD-TIME variable — set it before first deploy
+  # -------------------------------------------------------------------------
+  - type: web
+    name: voiceguard-frontend
+    runtime: static
+    region: oregon
+    rootDir: frontend
+    buildCommand: "npm install && npm run build"
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_BASE_URL
+        sync: false

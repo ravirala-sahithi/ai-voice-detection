@@ -1,5 +1,6 @@
 import io
 import os
+import gc
 import time
 import logging
 from typing import Optional
@@ -8,6 +9,12 @@ import numpy as np
 import soundfile as sf
 import librosa
 import torch
+
+# Deployment memory optimizations
+torch.set_num_threads(int(os.getenv("OMP_NUM_THREADS", "2")))
+os.environ.setdefault("TRANSFORMERS_CACHE", "/tmp/hf_cache")
+os.environ.setdefault("HF_HOME", "/tmp/hf_home")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 from fastapi import FastAPI, File, UploadFile, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -61,10 +68,15 @@ def load_ai_model():
     logger.info(f"Loading model '{MODEL_NAME}' on device '{device}'...")
     try:
         feature_extractor = AutoFeatureExtractor.from_pretrained(MODEL_NAME)
+        # Load in FP16 to halve memory footprint (~1.2 GB → ~600 MB for 300M-param model)
         try:
-            model = Wav2Vec2ForSequenceClassification.from_pretrained(MODEL_NAME)
+            model = Wav2Vec2ForSequenceClassification.from_pretrained(
+                MODEL_NAME, torch_dtype=torch.float16, low_cpu_mem_usage=True
+            )
         except Exception:
-            model = AutoModelForAudioClassification.from_pretrained(MODEL_NAME)
+            model = AutoModelForAudioClassification.from_pretrained(
+                MODEL_NAME, torch_dtype=torch.float16, low_cpu_mem_usage=True
+            )
         model.to(device)
         model.eval()
 
@@ -84,7 +96,8 @@ def load_ai_model():
 
         label_map = {"real": real_idx, "fake": fake_idx}
         model_loaded = True
-        logger.info(f"Model successfully loaded. Real index: {real_idx}, Fake index: {fake_idx}")
+        gc.collect()
+        logger.info(f"Model loaded (FP16, low_cpu_mem). Real index: {real_idx}, Fake index: {fake_idx}")
     except Exception as e:
         logger.error(f"Failed to load model '{MODEL_NAME}': {e}", exc_info=True)
         model_loaded = False
@@ -255,7 +268,7 @@ async def detect_voice(file: UploadFile = File(...)):
             padding=True
         )
 
-        input_values = inputs.input_values.to(device)
+        input_values = inputs.input_values.to(device, dtype=torch.float16)
         attention_mask = inputs.get("attention_mask")
         if attention_mask is not None:
             attention_mask = attention_mask.to(device)
