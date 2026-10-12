@@ -32,7 +32,16 @@ export const LoginPage = () => {
       navigate(destination, { replace: true });
     } catch (err) {
       console.error('Login error:', err);
-      const msg = err.response?.data?.message || 'Invalid email or password. Please try again.';
+      let msg = err.response?.data?.message;
+      if (!msg) {
+        if (!err.response) {
+          msg = 'Unable to connect to the backend server. Please verify the backend is running.';
+        } else if (err.response.status === 405 || err.response.status === 404) {
+          msg = `Backend API unavailable (HTTP ${err.response.status}). Ensure VITE_API_BASE_URL points to your deployed backend.`;
+        } else {
+          msg = 'Invalid email or password. Please try again.';
+        }
+      }
       setError(msg);
     } finally {
       setIsSubmitting(false);

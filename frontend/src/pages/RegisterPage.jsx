@@ -67,7 +67,16 @@ export const RegisterPage = () => {
       navigate('/dashboard', { replace: true });
     } catch (err) {
       console.error('Registration error:', err);
-      const msg = err.response?.data?.message || err.response?.data?.validationErrors?.email || 'Registration failed. Please try again.';
+      let msg = err.response?.data?.message || err.response?.data?.validationErrors?.email;
+      if (!msg) {
+        if (!err.response) {
+          msg = 'Unable to connect to the backend server. Please verify the backend is running.';
+        } else if (err.response.status === 405 || err.response.status === 404) {
+          msg = `Backend API unavailable (HTTP ${err.response.status}). Ensure VITE_API_BASE_URL points to your deployed backend.`;
+        } else {
+          msg = 'Registration failed. Please try again.';
+        }
+      }
       setError(msg);
     } finally {
       setIsSubmitting(false);
