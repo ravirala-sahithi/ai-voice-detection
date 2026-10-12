@@ -45,10 +45,13 @@ public class AuthService {
             throw new BadRequestException("An account with this email address already exists.");
         }
 
+        String encodedPassword = passwordEncoder.encode(request.getPassword());
         User user = User.builder()
                 .name(request.getName().trim())
                 .email(normalizedEmail)
-                .passwordHash(passwordEncoder.encode(request.getPassword()))
+                .passwordHash(encodedPassword)
+                .password(encodedPassword)
+                .role("ROLE_USER")
                 .build();
 
         User savedUser = userRepository.save(user);
