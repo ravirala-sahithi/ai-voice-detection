@@ -246,7 +246,11 @@ export const DetectPage = () => {
 
     } catch (err) {
       console.error('Analysis failed:', err);
-      const msg = err.response?.data?.message || 'Audio analysis failed. Ensure Python FastAPI and backend services are active.';
+      let msg = err.response?.data?.message || err.message || '';
+      // Sanitize: if message contains HTML tags, replace with a clean fallback
+      if (!msg || msg.trim().startsWith('<') || msg.length > 300) {
+        msg = 'The AI service is temporarily unavailable or starting up. Please wait 30–60 seconds and try again.';
+      }
       setError(msg);
       setIsAnalyzing(false);
       setUploadProgress(0);

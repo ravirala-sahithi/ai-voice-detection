@@ -217,8 +217,10 @@ def query_huggingface_api(audio_bytes: bytes) -> Optional[dict]:
                         scores["fake"] = score
                 if "real" in scores and "fake" in scores:
                     return scores
-        elif response.status_code == 503:
-            logger.info("HF Inference API model is loading (503). Using acoustic fallback.")
+        elif response.status_code in (502, 503):
+            logger.info(f"HF Inference API model is loading ({response.status_code}). Using acoustic fallback.")
+        else:
+            logger.debug(f"HF Inference API returned unexpected status {response.status_code}. Using acoustic fallback.")
     except Exception as e:
         logger.debug(f"HF Inference API call: {e}")
     return None

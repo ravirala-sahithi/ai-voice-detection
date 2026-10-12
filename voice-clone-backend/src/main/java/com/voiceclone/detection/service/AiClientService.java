@@ -88,8 +88,10 @@ public class AiClientService {
             throw new BadRequestException("AI Service rejected the audio: " + ex.getResponseBodyAsString());
 
         } catch (HttpServerErrorException ex) {
-            logger.error("AI service server error ({}): {}", ex.getStatusCode(), ex.getResponseBodyAsString());
-            throw new AiServiceException("AI service error during inference: " + ex.getResponseBodyAsString());
+            String rawBody = ex.getResponseBodyAsString();
+            String cleanMsg = sanitizeErrorBody(rawBody);
+            logger.error("AI service server error ({}): {}", ex.getStatusCode(), rawBody);
+            throw new AiServiceException("AI service error during inference: " + cleanMsg);
 
         } catch (ResourceAccessException ex) {
             logger.error("Failed to connect to AI service at {}: {}", detectEndpoint, ex.getMessage());
@@ -99,5 +101,30 @@ public class AiClientService {
             logger.error("Error reading uploaded file: {}", ex.getMessage());
             throw new BadRequestException("Could not read uploaded audio file: " + ex.getMessage());
         }
+    }
+
+    /**
+     * Strips HTML tags from an error response body and truncates to a safe length.
+     * Prevents raw 502/503 HTML pages returned by proxies/gateways from leaking
+     * into user-facing error messages.
+     */
+    private String sanitizeErrorBody(String rawBody) {
+        if (rawBody == null || rawBody.isBlank()) {
+            return "No details available from AI service.";
+        }
+        // Check if the response looks like HTML (starts with <!DOCTYPE or <html)
+        String trimmed = rawBody.trim();
+        if (trimmed.startsWith("<")) {
+            // It's HTML — extract only the text between <title> if present, else generic message
+            int titleStart = trimmed.toLowerCase().indexOf("<title>");
+            int titleEnd   = trimmed.toLowerCase().indexOf("</title>");
+            if (titleStart != -1 && titleEnd != -1 && titleEnd > titleStart) {
+                String title = trimmed.substring(titleStart + 7, titleEnd).trim();
+                return "AI service returned HTTP error: " + title + ". The service may be starting up — please retry in a moment.";
+            }
+            return "AI service is temporarily unavailable (gateway error). Please retry in 30–60 seconds.";
+        }
+        // Not HTML — just truncate to 200 chars
+        return trimmed.length() > 200 ? trimmed.substring(0, 200) + "…" : trimmed;
     }
 }
