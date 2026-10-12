@@ -247,8 +247,12 @@ export const DetectPage = () => {
     } catch (err) {
       console.error('Analysis failed:', err);
       let msg = err.response?.data?.message || err.message || '';
-      // Sanitize: if message contains HTML tags, replace with a clean fallback
-      if (!msg || msg.trim().startsWith('<') || msg.length > 300) {
+      // Strip internal sentinel prefix added by the Java retry logic
+      if (msg.startsWith('GATEWAY_ERROR:')) {
+        msg = msg.replace('GATEWAY_ERROR:', '').trim();
+      }
+      // Sanitize: if message contains HTML tags or is too long, use clean fallback
+      if (!msg || msg.trim().startsWith('<') || msg.length > 350) {
         msg = 'The AI service is temporarily unavailable or starting up. Please wait 30–60 seconds and try again.';
       }
       setError(msg);

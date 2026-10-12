@@ -149,27 +149,29 @@ def validate_and_load_audio(file_bytes: bytes, filename: str):
                 detail=f"Unable to decode audio file '{filename}'. Ensure it is a valid, uncorrupted audio format (WAV, MP3, FLAC, OGG)."
             )
 
-    # Resample to 16000 Hz if necessary
-    if sr != TARGET_SAMPLE_RATE:
-        try:
-            from scipy import signal
-            num_target_samples = int(len(waveform) * float(TARGET_SAMPLE_RATE) / float(sr))
-            waveform = signal.resample(waveform, num_target_samples).astype(np.float32)
-            sr = TARGET_SAMPLE_RATE
-        except Exception:
-            try:
-                import librosa
-                waveform = librosa.resample(waveform, orig_sr=sr, target_sr=TARGET_SAMPLE_RATE)
-                sr = TARGET_SAMPLE_RATE
-            except Exception as e_resamp:
-                logger.warning(f"Resampling failed: {e_resamp}")
-
     duration = float(len(waveform)) / float(sr)
     if duration < 0.4:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Audio is too short ({duration:.2f}s). Minimum required duration is 0.5 seconds."
         )
+
+    # Free-tier RAM optimization: only keep up to (MAX_ANALYSIS_SECONDS + 1.0) seconds
+    # for resampling and spectral analysis, preventing OOM on long files (e.g. 5+ min).
+    max_raw_samples = int((MAX_ANALYSIS_SECONDS + 1.0) * sr)
+    if len(waveform) > max_raw_samples:
+        waveform = waveform[:max_raw_samples]
+
+    # Resample to 16000 Hz if necessary using fast interpolation
+    if sr != TARGET_SAMPLE_RATE:
+        try:
+            num_target_samples = int(len(waveform) * float(TARGET_SAMPLE_RATE) / float(sr))
+            old_indices = np.linspace(0, 1, len(waveform))
+            new_indices = np.linspace(0, 1, num_target_samples)
+            waveform = np.interp(new_indices, old_indices, waveform).astype(np.float32)
+            sr = TARGET_SAMPLE_RATE
+        except Exception as e_resamp:
+            logger.warning(f"Resampling failed: {e_resamp}")
 
     peak_amplitude = float(np.max(np.abs(waveform)))
     rms_energy = float(np.sqrt(np.mean(waveform ** 2)))
@@ -191,21 +193,22 @@ def query_huggingface_api(audio_bytes: bytes) -> Optional[dict]:
     Queries HuggingFace Serverless Inference API for Wav2Vec2 classification.
     Returns parsed {'real': float, 'fake': float} or None on error/timeout.
     """
-    api_url = f"https://api-inference.huggingface.co/models/{MODEL_NAME}"
-    headers = {}
-    if HF_TOKEN:
-        headers["Authorization"] = f"Bearer {HF_TOKEN}"
+    if not HF_TOKEN:
+        # Skip remote call if no token is configured to prevent latency
+        return None
+
+    api_url = f"https://router.huggingface.co/hf-inference/models/{MODEL_NAME}"
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
 
     try:
         response = requests.post(
             api_url,
             headers=headers,
             data=audio_bytes,
-            timeout=8.0
+            timeout=3.5
         )
         if response.status_code == 200:
             result = response.json()
-            # HF returns list of [{'label': 'LABEL_0', 'score': 0.9}, ...]
             if isinstance(result, list) and len(result) > 0:
                 scores = {}
                 for item in result:
@@ -220,7 +223,7 @@ def query_huggingface_api(audio_bytes: bytes) -> Optional[dict]:
         elif response.status_code in (502, 503):
             logger.info(f"HF Inference API model is loading ({response.status_code}). Using acoustic fallback.")
         else:
-            logger.debug(f"HF Inference API returned unexpected status {response.status_code}. Using acoustic fallback.")
+            logger.debug(f"HF Inference API returned status {response.status_code}. Using acoustic fallback.")
     except Exception as e:
         logger.debug(f"HF Inference API call: {e}")
     return None
